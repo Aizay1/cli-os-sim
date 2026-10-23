@@ -1,0 +1,25 @@
+# Scheduling-focused workload: differing arrival times, priorities and I/O.
+# Try the same file with different algorithms, e.g.
+#   ossim examples/timesharing.txt --all
+#   ossim examples/timesharing.txt -a rr --quantum 2
+#   ossim examples/timesharing.txt -a priority
+
+program editor priority=3 arrival=0
+    cpu(6)
+    io(2)
+    cpu(2)
+    end
+
+program compiler priority=1 arrival=1
+    cpu(4)
+    end
+
+program mail priority=2 arrival=2
+    cpu(3)
+    io(1)
+    cpu(1)
+    end
+
+program logger priority=4 arrival=3
+    cpu(9)
+    end

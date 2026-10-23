@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cli-os-sim"
+version = "2.0.0"
+description = "A fast, deterministic simulator for OS CPU scheduling, resource allocation and deadlock handling."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "EnhancedPseudoOSSim contributors" }]
+keywords = ["operating-systems", "simulation", "scheduling", "deadlock", "education"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Education",
+    "Topic :: System :: Operating System Kernels",
+]
+
+[project.scripts]
+ossim = "ossim.cli:main"
+
+[tool.setuptools]
+packages = ["ossim"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

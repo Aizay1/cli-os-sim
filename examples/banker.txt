@@ -1,0 +1,26 @@
+# Deadlock *avoidance* demo (Banker's algorithm).
+#
+# With the default detector this workload deadlocks: P1 holds R1 while P2 holds
+# R2, and each then asks for the other's resource. Run it with
+#   ossim examples/banker.txt --avoidance banker
+# and the unsafe request is refused up front, so the system stays safe.
+
+resources R1=1, R2=1
+
+program P1
+    resource(1, allocate)
+    io(1)
+    resource(2, allocate)
+    cpu(1)
+    resource(1, release)
+    resource(2, release)
+    end
+
+program P2
+    resource(2, allocate)
+    io(1)
+    resource(1, allocate)
+    cpu(1)
+    resource(2, release)
+    resource(1, release)
+    end

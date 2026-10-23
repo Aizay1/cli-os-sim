@@ -1,0 +1,31 @@
+# Classic circular wait: every process grabs one resource, then yields the CPU
+# with I/O so that all of them end up holding one resource while waiting for
+# the neighbour's. Under any algorithm this deadlocks and the simulator
+# recovers (terminate / preempt / manual).
+program P1
+    resource(1, allocate)
+    io(1)
+    resource(2, allocate)
+    cpu(1)
+    end
+
+program P2
+    resource(2, allocate)
+    io(1)
+    resource(3, allocate)
+    cpu(1)
+    end
+
+program P3
+    resource(3, allocate)
+    io(1)
+    resource(4, allocate)
+    cpu(1)
+    end
+
+program P4
+    resource(4, allocate)
+    io(1)
+    resource(1, allocate)
+    cpu(1)
+    end
