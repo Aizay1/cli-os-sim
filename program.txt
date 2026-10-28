@@ -9,14 +9,14 @@ program P2
 resource(2, allocate)
 wait(1)
 resource(3, allocate)
-wait(1)
+wait(2)
 end
 
 program P3
 resource(3, allocate)
 wait(1)
 resource(4, allocate)
-wait(1)
+wait(3)
 end
 
 program P4

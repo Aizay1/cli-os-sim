@@ -8,6 +8,9 @@ version = "2.0.0"
 description = "A fast, deterministic simulator for OS CPU scheduling, resource allocation and deadlock handling."
 readme = "README.md"
 requires-python = ">=3.8"
+dependencies = [
+    "customtkinter>=5.2.2"
+]
 license = { text = "MIT" }
 authors = [{ name = "EnhancedPseudoOSSim contributors" }]
 keywords = ["operating-systems", "simulation", "scheduling", "deadlock", "education"]
@@ -19,6 +22,7 @@ classifiers = [
 
 [project.scripts]
 ossim = "ossim.cli:main"
+ossim-ui = "ossim.ui:main"
 
 [tool.setuptools]
 packages = ["ossim"]
