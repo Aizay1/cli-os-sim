@@ -20,6 +20,9 @@ classifiers = [
     "Topic :: System :: Operating System Kernels",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
 [project.scripts]
 ossim = "ossim.cli:main"
 ossim-ui = "ossim.ui:main"

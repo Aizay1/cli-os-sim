@@ -1,9 +1,10 @@
 # CLI OS Simulator
 
-A fast, deterministic **operating-systems simulator** written in pure Python.
+A fast, deterministic **operating-systems simulator** written in Python.
 It models how an OS schedules processes on a CPU, how processes share finite
-resources, and how the kernel detects and recovers from **deadlocks** — with no
-third-party dependencies.
+resources, and how the kernel detects and recovers from **deadlocks**.
+The command-line tool uses only the standard library; the optional GUI needs
+`customtkinter` (installed automatically on first launch, or via `pip`).
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -45,25 +46,66 @@ of work finishes instantly and produces the **same result every time**.
 
 ## Quick start
 
-**Requirements:** Python 3.8 or newer. Nothing else — the simulator itself uses
-only the standard library.
+**Requirements:** Python 3.8 or newer. No virtual environment is required.
+
+### Install (recommended)
+
+From the cloned repo this puts `ossim` and `ossim-ui` on your PATH:
 
 ```bash
-# 1. Run a bundled example
-python3 -m ossim program.txt
-
-# 2. Pick a specific algorithm
-python3 -m ossim program.txt --algorithm sjf
-
-# 3. Compare every algorithm on one workload
-python3 -m ossim examples/timesharing.txt --all
+python3 -m pip install --user .
 ```
 
-You can also run the original entry point, which forwards to the same tool:
+If pip refuses because the environment is "externally managed" (Arch, recent
+Debian/Ubuntu):
 
 ```bash
+python3 -m pip install --user --break-system-packages .
+```
+
+Make sure `~/.local/bin` is on your `PATH`. Then:
+
+```bash
+ossim program.txt --algorithm sjf
+ossim examples/timesharing.txt --all
+ossim-ui
+```
+
+The GUI also needs Tk (`tkinter`). If Python cannot import `tkinter`:
+
+```text
+Arch:    sudo pacman -S tk
+Debian:  sudo apt install python3-tk
+Fedora:  sudo dnf install python3-tkinter
+```
+
+### Run from the repo without installing the package
+
+The CLI needs nothing extra:
+
+```bash
+python3 -m ossim program.txt
+python3 -m ossim program.txt --algorithm sjf
+python3 -m ossim examples/timesharing.txt --all
 python3 ps-runner.py program.txt
 ```
+
+The GUI launcher installs `customtkinter` into your user site on first run if
+it is missing:
+
+```bash
+python3 ossim-ui.py
+# or
+python3 -m ossim.ui
+```
+
+The graphical interface includes full parity with the CLI:
+- **Built-in Workload Editor**: Open, create, edit, and save workload files (`program.txt`), with instant syntax validation and one-click example loaders.
+- **Algorithm & Quantum Control**: Select from all 7 scheduling policies (FCFS, SJF, SRTF, RR, Priority, Priority Preemptive, HRRN) and tune Round Robin time quantum.
+- **Deadlock Management**: Configure deadlock avoidance (Banker's Algorithm), recovery policies (`terminate`, `preempt`, `manual`), and victim selection rules (`resources`, `priority`, `progress`).
+- **Side-by-side Comparison (`--all`)**: Compare all algorithms simultaneously with a single click.
+- **Report Export**: Save simulation results to formatted Text, JSON, or CSV files.
+- **Integrated OS Documentation**: Browse algorithm guides and workload grammar reference directly inside the GUI.
 
 See the full option list with `python3 -m ossim --help`.
 
@@ -363,7 +405,9 @@ cli-os-sim/
 │   └── timesharing.txt    # arrivals, priorities and I/O for comparing policies
 ├── tests/                 # pytest suite (32 tests)
 ├── program.txt            # small bundled sample workload
-├── ps-runner.py           # backwards-compatible entry point
+├── ps-runner.py           # backwards-compatible CLI entry point
+├── ossim-ui.py            # GUI launcher (no venv needed)
+├── requirements.txt       # GUI dependency (customtkinter)
 ├── pyproject.toml         # packaging + console-script definition
 └── README.md
 ```
@@ -372,18 +416,16 @@ cli-os-sim/
 
 ## Development and tests
 
-The test suite uses [pytest](https://docs.pytest.org/).
+The test suite uses [pytest](https://docs.pytest.org/). No project virtual
+environment is required:
 
 ```bash
-# Option A: install into a virtual environment (recommended)
-python3 -m venv .venv
-source .venv/bin/activate
-pip install pytest
-pytest
+python3 -m pip install --user pytest
+python3 -m pytest
 
-# Option B: install the package itself (adds the `ossim` command)
-pip install -e .
+# After `pip install --user .` the commands are also available:
 ossim examples/timesharing.txt --all
+ossim-ui
 ```
 
 Tests cover the parser, every scheduler, the discrete-event engine (including
