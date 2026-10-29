@@ -90,6 +90,21 @@ def _ensure_customtkinter():
 _ensure_customtkinter()
 import customtkinter as ctk  # noqa: E402
 
+# Safe-patch CustomTkinter mouse-wheel handler on Python 3.14 where event.widget can be a str path
+_orig_check_scroll = ctk.CTkScrollableFrame._check_if_valid_scroll
+
+def _safe_check_if_valid_scroll(self, widget):
+    if isinstance(widget, str):
+        try:
+            widget = self.nametowidget(widget)
+        except Exception:
+            return False
+    if widget is None or not hasattr(widget, "master"):
+        return False
+    return _orig_check_scroll(self, widget)
+
+ctk.CTkScrollableFrame._check_if_valid_scroll = _safe_check_if_valid_scroll
+
 # Set appearance mode and color theme
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -409,16 +424,14 @@ class SimulatorApp(ctk.CTk):
         super().__init__()
 
         self.title("CLI OS Simulator - Interactive GUI")
-        self.geometry("1200x780")
-        self.minsize(980, 640)
+        self.geometry("1240x800")
+        self.minsize(1000, 660)
 
-        # Track file and simulation state
+        # Multi-algorithm simulation storage
+        self.sim_results = {}  # {algo_name: Simulation}
+        self.current_processes = []
         self.current_filepath = None
-        self.last_sim = None
-        self.last_algo = "fcfs"
         self.last_source = "workload"
-        self.last_comparison = None  # (runs, sims, names)
-        self.is_comparison_mode = False
         self._last_deadlock_info = ""
         self._suppress_status_update = False
 
@@ -433,8 +446,8 @@ class SimulatorApp(ctk.CTk):
         # Load initial file (program.txt if present)
         self._load_initial_workload()
 
-        # Trigger algorithm selection update
-        self._on_algo_changed("fcfs - First-Come, First-Served")
+        # Trigger initial algorithm option sync
+        self._on_sidebar_algo_changed("fcfs - First-Come, First-Served")
 
     # ------------------------------------------------------------------ #
     # Sidebar
@@ -505,7 +518,7 @@ class SimulatorApp(ctk.CTk):
         # --- SECTION: Scheduling Policy ---
         self._create_section_header("Scheduling Policy")
 
-        self.algo_label = ctk.CTkLabel(self.sidebar_frame, text="Algorithm:", font=ctk.CTkFont(size=12))
+        self.algo_label = ctk.CTkLabel(self.sidebar_frame, text="Active Algorithm:", font=ctk.CTkFont(size=12))
         self.algo_label.pack(padx=16, pady=(2, 2), anchor="w")
 
         self.algo_display_map = {
@@ -517,16 +530,16 @@ class SimulatorApp(ctk.CTk):
             "priority-p": "priority-p - Priority (preemptive)",
             "hrrn": "hrrn - Highest Response Ratio Next",
         }
-        self.algo_var = ctk.StringVar(value=self.algo_display_map["fcfs"])
-        self.algo_menu = VisibleOptionMenu(
+        self.sidebar_algo_var = ctk.StringVar(value=self.algo_display_map["fcfs"])
+        self.sidebar_algo_menu = VisibleOptionMenu(
             self.sidebar_frame,
             values=list(self.algo_display_map.values()),
-            variable=self.algo_var,
-            command=self._on_algo_changed,
+            variable=self.sidebar_algo_var,
+            command=self._on_sidebar_algo_changed,
             width=248,
             height=28,
         )
-        self.algo_menu.pack(padx=16, pady=(0, 8), fill="x")
+        self.sidebar_algo_menu.pack(padx=16, pady=(0, 8), fill="x")
 
         # Quantum
         self.quantum_label = ctk.CTkLabel(
@@ -622,7 +635,7 @@ class SimulatorApp(ctk.CTk):
         # Run Button
         self.run_btn = ctk.CTkButton(
             self.sidebar_frame,
-            text="▶ Run Simulation",
+            text="▶ Run Simulation (All Algorithms)",
             font=ctk.CTkFont(size=13, weight="bold"),
             height=34,
             fg_color=("#2FA572", "#228B55"),
@@ -634,7 +647,7 @@ class SimulatorApp(ctk.CTk):
         # Compare All Button
         self.compare_btn = ctk.CTkButton(
             self.sidebar_frame,
-            text="⚡ Compare All Algorithms (--all)",
+            text="⚡ Compare Algorithms Tab",
             font=ctk.CTkFont(size=12, weight="bold"),
             height=32,
             fg_color=("#6552B5", "#513F9D"),
@@ -702,6 +715,9 @@ class SimulatorApp(ctk.CTk):
         self._build_logs_tab()
         self._build_help_tab()
 
+    # ------------------------------------------------------------------ #
+    # 1. Editor Tab with Line Numbers
+    # ------------------------------------------------------------------ #
     def _build_editor_tab(self):
         tab = self.tabview.tab("📝 Editor")
         tab.grid_columnconfigure(0, weight=1)
@@ -881,78 +897,451 @@ class SimulatorApp(ctk.CTk):
         self.help_topic_var.set("📝 Workload Syntax Writing Guide (Detailed)")
         self._update_help_text("syntax")
 
+    # ------------------------------------------------------------------ #
+    # 2. Metrics Tab with Algorithm Filter
+    # ------------------------------------------------------------------ #
     def _build_metrics_tab(self):
         tab = self.tabview.tab("📊 Metrics")
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        # Filter bar
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.grid(row=0, column=0, padx=4, pady=(2, 6), sticky="ew")
+
+        ctk.CTkLabel(bar, text="Algorithm View:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(4, 6))
+
+        metric_algo_options = ["🌟 All Algorithms (Combined)"] + [f"{name} - {display_name(name)}" for name in ORDER]
+        self.metrics_algo_var = ctk.StringVar(value="🌟 All Algorithms (Combined)")
+        self.metrics_algo_menu = VisibleOptionMenu(
+            bar,
+            values=metric_algo_options,
+            variable=self.metrics_algo_var,
+            command=lambda _: self._update_metrics_view(),
+            width=280,
+            height=28,
+        )
+        self.metrics_algo_menu.pack(side="left", padx=4)
 
         self.metrics_text = ctk.CTkTextbox(
             tab,
             font=ctk.CTkFont(family="Courier", size=13),
             wrap="none",
         )
-        self.metrics_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.metrics_text.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
         self.metrics_text.insert(
             ctk.END,
-            "Run a simulation (or click '▶ Run Simulation' on the left) to view aggregate metrics here.\n",
+            "Run a simulation to view metrics for all algorithms here.\n",
         )
 
+    def _update_metrics_view(self):
+        if not self.sim_results:
+            return
+
+        choice = self.metrics_algo_var.get()
+        self.metrics_text.delete("1.0", ctk.END)
+
+        if choice.startswith("🌟"):
+            # Show all algorithms' metrics
+            out = [f"AGGREGATE METRICS SUMMARY (All Algorithms) - Workload: {self.last_source}\n{'=' * 75}\n"]
+            for name in ORDER:
+                if name in self.sim_results:
+                    sim = self.sim_results[name]
+                    out.append(f"► {display_name(name).upper()} ({name})")
+                    out.append("-" * 45)
+                    out.append(format_metrics(sim.metrics()))
+                    if sim.force_released:
+                        out.append("  Force releases:")
+                        for rid, owner in sim.force_released:
+                            out.append(f"    • R{rid} taken from {owner}")
+                    if sim.aborted:
+                        out.append("  ⚠ Simulation ended early.")
+                    out.append("\n" + "." * 70 + "\n")
+            self.metrics_text.insert(ctk.END, "\n".join(out))
+        else:
+            algo_key = choice.split(" ")[0].strip()
+            if algo_key in self.sim_results:
+                sim = self.sim_results[algo_key]
+                header = (
+                    f"SIMULATION REPORT - {display_name(algo_key).upper()}\n"
+                    f"Workload: {self.last_source}\n"
+                    f"{'=' * 55}\n\n"
+                )
+                self.metrics_text.insert(ctk.END, header)
+                self.metrics_text.insert(ctk.END, "Aggregate Metrics:\n")
+                self.metrics_text.insert(ctk.END, format_metrics(sim.metrics()))
+                if sim.force_released:
+                    self.metrics_text.insert(ctk.END, "\n\nForce-Released Resources (Deadlock recovery):\n")
+                    for rid, owner in sim.force_released:
+                        self.metrics_text.insert(ctk.END, f"  • R{rid} taken from {owner}\n")
+                if sim.aborted:
+                    self.metrics_text.insert(ctk.END, "\n\n⚠ WARNING: Simulation ended early (deadlock or step budget)!\n")
+
+    # ------------------------------------------------------------------ #
+    # 3. Comparison Tab with Custom Algorithm Selection Filter
+    # ------------------------------------------------------------------ #
     def _build_comparison_tab(self):
         tab = self.tabview.tab("📈 Comparison")
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        # Filter Frame with Checkboxes for choosing which algorithms to compare
+        filter_box = ctk.CTkFrame(tab, fg_color=("gray92", "gray16"), corner_radius=6)
+        filter_box.grid(row=0, column=0, padx=4, pady=(2, 6), sticky="ew")
+
+        top_row = ctk.CTkFrame(filter_box, fg_color="transparent")
+        top_row.pack(fill="x", padx=8, pady=(6, 2))
+
+        ctk.CTkLabel(
+            top_row,
+            text="Select Algorithms to Compare Side-by-Side:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            top_row,
+            text="Select All",
+            width=70,
+            height=22,
+            font=ctk.CTkFont(size=11),
+            command=self._select_all_compare,
+        ).pack(side="right", padx=2)
+
+        ctk.CTkButton(
+            top_row,
+            text="Clear",
+            width=50,
+            height=22,
+            font=ctk.CTkFont(size=11),
+            fg_color="gray",
+            command=self._clear_all_compare,
+        ).pack(side="right", padx=2)
+
+        # Checkboxes row
+        cb_row = ctk.CTkFrame(filter_box, fg_color="transparent")
+        cb_row.pack(fill="x", padx=8, pady=(2, 6))
+
+        self.compare_vars = {}
+        for name in ORDER:
+            var = ctk.BooleanVar(value=True)
+            self.compare_vars[name] = var
+            cb = ctk.CTkCheckBox(
+                cb_row,
+                text=name.upper(),
+                variable=var,
+                command=self._update_comparison_view,
+                checkbox_width=18,
+                checkbox_height=18,
+                font=ctk.CTkFont(size=11),
+            )
+            cb.pack(side="left", padx=6)
 
         self.comparison_text = ctk.CTkTextbox(
             tab,
             font=ctk.CTkFont(family="Courier", size=13),
             wrap="none",
         )
-        self.comparison_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.comparison_text.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
         self.comparison_text.insert(
             ctk.END,
-            "Click '⚡ Compare All Algorithms (--all)' in the sidebar to run every scheduling\n"
-            "algorithm on this workload and view the side-by-side comparative table.\n",
+            "Run a simulation to view side-by-side algorithm comparison here.\n"
+            "You can selectively check/uncheck any algorithms above to compare only the policies you care about.\n",
         )
 
+    def _select_all_compare(self):
+        for var in self.compare_vars.values():
+            var.set(True)
+        self._update_comparison_view()
+
+    def _clear_all_compare(self):
+        for var in self.compare_vars.values():
+            var.set(False)
+        self._update_comparison_view()
+
+    def _update_comparison_view(self):
+        if not self.sim_results:
+            return
+
+        selected = [n for n in ORDER if self.compare_vars.get(n, ctk.BooleanVar()).get()]
+        self.comparison_text.delete("1.0", ctk.END)
+
+        if not selected:
+            self.comparison_text.insert(ctk.END, "(No algorithms selected. Please check at least one algorithm above.)\n")
+            return
+
+        runs = {n: self.sim_results[n].metrics() for n in selected if n in self.sim_results}
+        names = {n: display_name(n) for n in selected}
+
+        header = f"Algorithm comparison for {self.last_source}\n{'=' * (25 + len(self.last_source))}"
+        full_table = comparison_table(runs, names)
+        text = f"{header}\n\n{full_table}\n"
+        self.comparison_text.insert(ctk.END, text)
+
+    # ------------------------------------------------------------------ #
+    # 4. Process Table Tab with Algorithm & Process Filters
+    # ------------------------------------------------------------------ #
     def _build_process_tab(self):
         tab = self.tabview.tab("📋 Process Table")
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        # Filter bar
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.grid(row=0, column=0, padx=4, pady=(2, 6), sticky="ew")
+
+        ctk.CTkLabel(bar, text="Algorithm:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(4, 4))
+
+        proc_algo_options = ["🌟 All Algorithms (Combined)"] + [f"{name} - {display_name(name)}" for name in ORDER]
+        self.process_algo_var = ctk.StringVar(value="fcfs - First-Come, First-Served")
+        self.process_algo_menu = VisibleOptionMenu(
+            bar,
+            values=proc_algo_options,
+            variable=self.process_algo_var,
+            command=lambda _: self._update_process_view(),
+            width=260,
+            height=28,
+        )
+        self.process_algo_menu.pack(side="left", padx=4)
+
+        ctk.CTkLabel(bar, text="Filter Process:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(12, 4))
+
+        self.process_proc_var = ctk.StringVar(value="All Processes")
+        self.process_proc_menu = VisibleOptionMenu(
+            bar,
+            values=["All Processes"],
+            variable=self.process_proc_var,
+            command=lambda _: self._update_process_view(),
+            width=140,
+            height=28,
+        )
+        self.process_proc_menu.pack(side="left", padx=4)
 
         self.process_text = ctk.CTkTextbox(
             tab,
             font=ctk.CTkFont(family="Courier", size=13),
             wrap="none",
         )
-        self.process_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.process_text.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
         self.process_text.insert(ctk.END, "Per-process metrics table will appear here.\n")
 
+    def _update_process_view(self):
+        if not self.sim_results:
+            return
+
+        choice = self.process_algo_var.get()
+        proc_filter = self.process_proc_var.get()
+        self.process_text.delete("1.0", ctk.END)
+
+        headers = ["Process", "Prio", "Arrival", "Start", "Finish", "Burst", "I/O", "Turnaround", "Waiting", "Response"]
+
+        def filter_rows(sim):
+            rows = []
+            for r in sim.process_rows():
+                if proc_filter != "All Processes" and r["name"] != proc_filter:
+                    continue
+                rows.append([
+                    r["name"], r["priority"], r["arrival"], r["start"],
+                    r["finish"], r["burst"], r["io"], r["turnaround"],
+                    r["waiting"], r["response"],
+                ])
+            return rows
+
+        if choice.startswith("🌟"):
+            out = [f"PER-PROCESS METRICS (All Algorithms) - Filter: {proc_filter}\n{'=' * 75}\n"]
+            for name in ORDER:
+                if name in self.sim_results:
+                    sim = self.sim_results[name]
+                    out.append(f"► {display_name(name).upper()} ({name})")
+                    rows = filter_rows(sim)
+                    out.append(table(headers, rows) if rows else "(No matching processes)")
+                    out.append("\n")
+            self.process_text.insert(ctk.END, "\n".join(out))
+        else:
+            algo_key = choice.split(" ")[0].strip()
+            if algo_key in self.sim_results:
+                sim = self.sim_results[algo_key]
+                rows = filter_rows(sim)
+                ptable = table(headers, rows) if rows else "(No matching processes)"
+                header = f"PROCESS METRICS - {display_name(algo_key).upper()} (Filter: {proc_filter})\n{'=' * 65}\n\n"
+                self.process_text.insert(ctk.END, header + ptable)
+
+    # ------------------------------------------------------------------ #
+    # 5. Timeline (Gantt) Tab with Stacked Multi-Algorithm View
+    # ------------------------------------------------------------------ #
     def _build_timeline_tab(self):
         tab = self.tabview.tab("⏱ Timeline")
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        # Filter bar
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.grid(row=0, column=0, padx=4, pady=(2, 6), sticky="ew")
+
+        ctk.CTkLabel(bar, text="Timeline View:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(4, 4))
+
+        timeline_algo_options = ["🌟 All Algorithms (Stacked Timelines)"] + [f"{name} - {display_name(name)}" for name in ORDER]
+        self.timeline_algo_var = ctk.StringVar(value="🌟 All Algorithms (Stacked Timelines)")
+        self.timeline_algo_menu = VisibleOptionMenu(
+            bar,
+            values=timeline_algo_options,
+            variable=self.timeline_algo_var,
+            command=lambda _: self._update_timeline_view(),
+            width=300,
+            height=28,
+        )
+        self.timeline_algo_menu.pack(side="left", padx=4)
 
         self.timeline_text = ctk.CTkTextbox(
             tab,
             font=ctk.CTkFont(family="Courier", size=13),
             wrap="none",
         )
-        self.timeline_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.timeline_text.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
         self.timeline_text.insert(ctk.END, "Proportional ASCII Gantt timeline will appear here.\n")
 
+    def _update_timeline_view(self):
+        if not self.sim_results:
+            return
+
+        choice = self.timeline_algo_var.get()
+        self.timeline_text.delete("1.0", ctk.END)
+
+        if choice.startswith("🌟"):
+            out = [f"STACKED CPU GANTT TIMELINES (All Algorithms)\n{'=' * 75}\n"]
+            for name in ORDER:
+                if name in self.sim_results:
+                    sim = self.sim_results[name]
+                    out.append(f"► {display_name(name).upper()} ({name})")
+                    out.append(render_gantt(sim.timeline, width=88))
+                    out.append("\n" + "-" * 75 + "\n")
+            self.timeline_text.insert(ctk.END, "\n".join(out))
+        else:
+            algo_key = choice.split(" ")[0].strip()
+            if algo_key in self.sim_results:
+                sim = self.sim_results[algo_key]
+                header = f"CPU TIMELINE - {display_name(algo_key).upper()}\n{'=' * 50}\n\n"
+                gantt = render_gantt(sim.timeline, width=88)
+                self.timeline_text.insert(ctk.END, header + gantt)
+
+    # ------------------------------------------------------------------ #
+    # 6. Event Logs Tab with Process & Action Filters
+    # ------------------------------------------------------------------ #
     def _build_logs_tab(self):
         tab = self.tabview.tab("📜 Logs")
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        # Filter bar
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.grid(row=0, column=0, padx=4, pady=(2, 6), sticky="ew")
+
+        ctk.CTkLabel(bar, text="Algorithm:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(4, 4))
+
+        logs_algo_options = [f"{name} - {display_name(name)}" for name in ORDER] + ["🌟 All Algorithms (Combined)"]
+        self.logs_algo_var = ctk.StringVar(value=logs_algo_options[0])
+        self.logs_algo_menu = VisibleOptionMenu(
+            bar,
+            values=logs_algo_options,
+            variable=self.logs_algo_var,
+            command=lambda _: self._update_logs_view(),
+            width=240,
+            height=28,
+        )
+        self.logs_algo_menu.pack(side="left", padx=4)
+
+        ctk.CTkLabel(bar, text="Process:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(10, 4))
+        self.logs_proc_var = ctk.StringVar(value="All Processes")
+        self.logs_proc_menu = VisibleOptionMenu(
+            bar,
+            values=["All Processes"],
+            variable=self.logs_proc_var,
+            command=lambda _: self._update_logs_view(),
+            width=130,
+            height=28,
+        )
+        self.logs_proc_menu.pack(side="left", padx=4)
+
+        ctk.CTkLabel(bar, text="Action:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(10, 4))
+        action_options = [
+            "All Actions",
+            "arrived",
+            "dispatched",
+            "cpu burst",
+            "io",
+            "acquired",
+            "blocked",
+            "released",
+            "deadlock",
+            "terminated",
+        ]
+        self.logs_action_var = ctk.StringVar(value="All Actions")
+        self.logs_action_menu = VisibleOptionMenu(
+            bar,
+            values=action_options,
+            variable=self.logs_action_var,
+            command=lambda _: self._update_logs_view(),
+            width=140,
+            height=28,
+        )
+        self.logs_action_menu.pack(side="left", padx=4)
 
         self.logs_text = ctk.CTkTextbox(
             tab,
             font=ctk.CTkFont(family="Courier", size=13),
             wrap="none",
         )
-        self.logs_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.logs_text.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
         self.logs_text.insert(ctk.END, "Step-by-step event trace log will appear here.\n")
 
+    def _update_logs_view(self):
+        if not self.sim_results:
+            return
+
+        algo_choice = self.logs_algo_var.get()
+        proc_filter = self.logs_proc_var.get()
+        act_filter = self.logs_action_var.get()
+        self.logs_text.delete("1.0", ctk.END)
+
+        headers = ["Time", "Process", "Action", "Resource", "Detail"]
+
+        def filter_events(events):
+            rows = []
+            for e in events:
+                if proc_filter != "All Processes" and e.process != proc_filter:
+                    continue
+                if act_filter != "All Actions" and act_filter.lower() not in e.action.lower():
+                    continue
+                rows.append([
+                    f"{e.time:g}",
+                    e.process,
+                    e.action,
+                    f"R{e.resource}" if e.resource is not None else "",
+                    e.detail or "",
+                ])
+            return rows
+
+        if algo_choice.startswith("🌟"):
+            out = [f"EVENT LOGS (All Algorithms) - Process: {proc_filter} | Action: {act_filter}\n{'=' * 75}\n"]
+            for name in ORDER:
+                if name in self.sim_results:
+                    sim = self.sim_results[name]
+                    out.append(f"► {display_name(name).upper()} ({name})")
+                    rows = filter_events(sim.events)
+                    out.append(table(headers, rows) if rows else "(No matching events)")
+                    out.append("\n")
+            self.logs_text.insert(ctk.END, "\n".join(out))
+        else:
+            algo_key = algo_choice.split(" ")[0].strip()
+            if algo_key in self.sim_results:
+                sim = self.sim_results[algo_key]
+                rows = filter_events(sim.events)
+                t_str = table(headers, rows) if rows else "(No matching events)"
+                header = f"EVENT TRACE - {display_name(algo_key).upper()} (Process: {proc_filter} | Action: {act_filter})\n{'=' * 70}\n\n"
+                self.logs_text.insert(ctk.END, header + t_str)
+
+    # ------------------------------------------------------------------ #
+    # 7. Help & Guide Tab
+    # ------------------------------------------------------------------ #
     def _build_help_tab(self):
         tab = self.tabview.tab("❓ Help & Guide")
         tab.grid_columnconfigure(0, weight=1)
@@ -998,7 +1387,7 @@ class SimulatorApp(ctk.CTk):
         self._update_help_text("overview")
 
     # ------------------------------------------------------------------ #
-    # File Operations & Workload Editor
+    # File Operations
     # ------------------------------------------------------------------ #
     def _load_initial_workload(self):
         candidate = "program.txt"
@@ -1107,7 +1496,7 @@ class SimulatorApp(ctk.CTk):
     # ------------------------------------------------------------------ #
     # Event Handlers & Configuration
     # ------------------------------------------------------------------ #
-    def _on_algo_changed(self, choice: str):
+    def _on_sidebar_algo_changed(self, choice: str):
         key = choice.split(" ")[0]
         if key == "rr":
             self.quantum_entry.configure(state="normal")
@@ -1115,6 +1504,15 @@ class SimulatorApp(ctk.CTk):
         else:
             self.quantum_entry.configure(state="disabled")
             self.quantum_label.configure(text="Round Robin Quantum (-q): (RR only)")
+
+        # Sync selection to Process Table and Logs if not on combined view
+        display_val = f"{key} - {display_name(key)}"
+        if hasattr(self, "process_algo_var") and not self.process_algo_var.get().startswith("🌟"):
+            self.process_algo_var.set(display_val)
+            self._update_process_view()
+        if hasattr(self, "logs_algo_var") and not self.logs_algo_var.get().startswith("🌟"):
+            self.logs_algo_var.set(display_val)
+            self._update_logs_view()
 
     def _on_help_topic_changed(self, choice: str):
         topic_key = self.help_topics_map.get(choice, "overview")
@@ -1196,34 +1594,7 @@ class SimulatorApp(ctk.CTk):
             return val.strip() if val else ""
 
     def run_simulation(self):
-        program = self._get_program_from_editor()
-        if program is None:
-            return
-
-        algo_key = self.algo_var.get().split(" ")[0]
-        try:
-            quantum = float(self.quantum_var.get())
-            if quantum <= 0:
-                quantum = 4.0
-        except ValueError:
-            messagebox.showerror("Invalid Value", "Round Robin Quantum must be a positive number.")
-            return
-
-        config = self._build_sim_config()
-
-        try:
-            sim = simulate(program, algorithm=algo_key, quantum=quantum, config=config)
-            self.last_sim = sim
-            self.last_algo = algo_key
-            self.last_source = self.current_filepath or program.source
-            self.is_comparison_mode = False
-
-            self.display_single_results(sim, algo_key, program.source)
-            self.tabview.set("📊 Metrics")
-        except Exception as e:
-            messagebox.showerror("Simulation Error", f"An error occurred during simulation:\n{e}")
-
-    def run_compare_all(self):
+        """Simulate ALL algorithms on the workload to populate all tabs instantly."""
         program = self._get_program_from_editor()
         if program is None:
             return
@@ -1238,102 +1609,48 @@ class SimulatorApp(ctk.CTk):
         config = self._build_sim_config()
 
         try:
-            runs = {}
-            sims = {}
+            results = {}
             for name in ORDER:
-                s = simulate(program, algorithm=name, quantum=quantum, config=config)
-                runs[name] = s.metrics()
-                sims[name] = s
+                sim = simulate(program, algorithm=name, quantum=quantum, config=config)
+                results[name] = sim
 
-            names = {n: display_name(n) for n in ORDER}
-            self.last_comparison = (runs, sims, names)
-            self.last_sim = sims[ORDER[0]]
-            self.last_algo = ORDER[0]
+            self.sim_results = results
             self.last_source = self.current_filepath or program.source
-            self.is_comparison_mode = True
 
-            header = f"Algorithm comparison for {self.last_source}\n{'=' * (25 + len(self.last_source))}"
-            full_table = comparison_table(runs, names)
-            text = f"{header}\n\n{full_table}\n"
+            # Update process list for filters
+            self.current_processes = [p.name for p in program.processes]
+            proc_options = ["All Processes"] + self.current_processes
+            self.process_proc_menu.configure(values=proc_options)
+            self.logs_proc_menu.configure(values=proc_options)
 
-            self.comparison_text.delete("1.0", ctk.END)
-            self.comparison_text.insert(ctk.END, text)
+            # Refresh all tab views with new data
+            self._update_metrics_view()
+            self._update_comparison_view()
+            self._update_process_view()
+            self._update_timeline_view()
+            self._update_logs_view()
 
-            self.display_single_results(sims[ORDER[0]], ORDER[0], self.last_source)
-            self.tabview.set("📈 Comparison")
+            # Switch to Metrics tab
+            self.tabview.set("📊 Metrics")
         except Exception as e:
-            messagebox.showerror("Comparison Error", f"Failed to run algorithm comparison:\n{e}")
+            messagebox.showerror("Simulation Error", f"An error occurred during simulation:\n{e}")
 
-    def display_single_results(self, sim, algo_key: str, source: str):
-        # 1. Metrics Tab
-        self.metrics_text.delete("1.0", ctk.END)
-        metrics_header = (
-            f"SIMULATION REPORT - {display_name(algo_key).upper()}\n"
-            f"Workload: {source}\n"
-            f"{'=' * 50}\n\n"
-        )
-        self.metrics_text.insert(ctk.END, metrics_header)
-        self.metrics_text.insert(ctk.END, "Aggregate Metrics:\n")
-        self.metrics_text.insert(ctk.END, format_metrics(sim.metrics()))
-
-        if sim.force_released:
-            self.metrics_text.insert(ctk.END, "\n\nForce-Released Resources (Deadlock recovery):\n")
-            for rid, owner in sim.force_released:
-                self.metrics_text.insert(ctk.END, f"  • R{rid} taken from {owner}\n")
-
-        if sim.aborted:
-            self.metrics_text.insert(ctk.END, "\n\n⚠ WARNING: Simulation ended early (deadlock or step budget)!\n")
-
-        # 2. Process Table Tab
-        self.process_text.delete("1.0", ctk.END)
-        rows = []
-        for row in sim.process_rows():
-            rows.append([
-                row["name"],
-                row["priority"],
-                row["arrival"],
-                row["start"],
-                row["finish"],
-                row["burst"],
-                row["io"],
-                row["turnaround"],
-                row["waiting"],
-                row["response"],
-            ])
-        ptable = table(
-            ["Process", "Prio", "Arrival", "Start", "Finish", "Burst", "I/O",
-             "Turnaround", "Waiting", "Response"],
-            rows,
-        )
-        self.process_text.insert(ctk.END, ptable)
-
-        # 3. Timeline Tab
-        self.timeline_text.delete("1.0", ctk.END)
-        gantt = render_gantt(sim.timeline, width=88)
-        self.timeline_text.insert(ctk.END, gantt)
-
-        # 4. Logs Tab
-        self.logs_text.delete("1.0", ctk.END)
-        trace_rows = [
-            [f"{e.time:g}", e.process, e.action,
-             f"R{e.resource}" if e.resource is not None else "",
-             e.detail or ""]
-            for e in sim.events
-        ]
-        log_table = table(["Time", "Process", "Action", "Resource", "Detail"], trace_rows)
-        self.logs_text.insert(ctk.END, log_table)
+    def run_compare_all(self):
+        """Run all algorithms and switch directly to Comparison tab."""
+        self.run_simulation()
+        self.tabview.set("📈 Comparison")
 
     # ------------------------------------------------------------------ #
     # Exporting Reports
     # ------------------------------------------------------------------ #
     def export_report(self):
-        if not self.last_sim and not self.last_comparison:
-            messagebox.showinfo("Export", "Please run a simulation or comparison first.")
+        if not self.sim_results:
+            messagebox.showinfo("Export", "Please run a simulation first before exporting.")
             return
 
         dialog = ctk.CTkToplevel(self)
         dialog.title("Export Simulation Report")
-        dialog.geometry("380x230")
+        dialog.geometry("400x260")
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
@@ -1342,21 +1659,35 @@ class SimulatorApp(ctk.CTk):
             dialog,
             text="Choose Report Export Format:",
             font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(padx=20, pady=(16, 12))
+        ).pack(padx=20, pady=(16, 8))
 
         fmt_var = ctk.StringVar(value="txt")
 
         radio_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        radio_frame.pack(padx=20, pady=4, fill="x")
+        radio_frame.pack(padx=20, pady=2, fill="x")
 
-        ctk.CTkRadioButton(radio_frame, text="Plain Text Report (.txt)", variable=fmt_var, value="txt").pack(anchor="w", pady=4)
-        ctk.CTkRadioButton(radio_frame, text="JSON Machine-Readable (.json)", variable=fmt_var, value="json").pack(anchor="w", pady=4)
-        ctk.CTkRadioButton(radio_frame, text="CSV Process Metrics (.csv)", variable=fmt_var, value="csv").pack(anchor="w", pady=4)
+        ctk.CTkRadioButton(radio_frame, text="Plain Text Report (.txt)", variable=fmt_var, value="txt").pack(anchor="w", pady=3)
+        ctk.CTkRadioButton(radio_frame, text="JSON Machine-Readable (.json)", variable=fmt_var, value="json").pack(anchor="w", pady=3)
+        ctk.CTkRadioButton(radio_frame, text="CSV Process Metrics (.csv)", variable=fmt_var, value="csv").pack(anchor="w", pady=3)
+
+        ctk.CTkLabel(
+            dialog,
+            text="Scope:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(padx=20, pady=(8, 2), anchor="w")
+
+        scope_var = ctk.StringVar(value="comparison")
+        scope_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        scope_frame.pack(padx=20, pady=2, fill="x")
+
+        ctk.CTkRadioButton(scope_frame, text="Algorithm Comparison", variable=scope_var, value="comparison").pack(side="left", padx=(0, 10))
+        ctk.CTkRadioButton(scope_frame, text="Active Sidebar Algorithm", variable=scope_var, value="active").pack(side="left")
 
         def do_export():
             fmt = fmt_var.get()
+            scope = scope_var.get()
             dialog.destroy()
-            self._save_export_file(fmt)
+            self._save_export_file(fmt, scope)
 
         btn_row = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_row.pack(padx=20, pady=(16, 10), fill="x")
@@ -1364,7 +1695,7 @@ class SimulatorApp(ctk.CTk):
         ctk.CTkButton(btn_row, text="Cancel", width=90, fg_color="gray", command=dialog.destroy).pack(side="right", padx=(6, 0))
         ctk.CTkButton(btn_row, text="Save As...", width=100, command=do_export).pack(side="right")
 
-    def _save_export_file(self, fmt: str):
+    def _save_export_file(self, fmt: str, scope: str):
         ext_map = {"txt": ".txt", "json": ".json", "csv": ".csv"}
         types_map = {
             "txt": [("Text Files", "*.txt"), ("All Files", "*.*")],
@@ -1382,28 +1713,33 @@ class SimulatorApp(ctk.CTk):
 
         try:
             content = ""
-            if self.is_comparison_mode and self.last_comparison:
-                runs, sims, names = self.last_comparison
+            active_algo = self.sidebar_algo_var.get().split(" ")[0]
+            sim = self.sim_results.get(active_algo, self.sim_results.get(ORDER[0]))
+
+            if scope == "comparison":
+                selected = [n for n in ORDER if self.compare_vars.get(n, ctk.BooleanVar()).get()] or ORDER
+                runs = {n: self.sim_results[n].metrics() for n in selected if n in self.sim_results}
+                names = {n: display_name(n) for n in selected}
                 if fmt == "json":
                     import json
                     payload = {
                         "workload": self.last_source,
                         "comparison": runs,
-                        "runs": {n: to_dict(sims[n], names[n], self.last_source) for n in ORDER},
+                        "runs": {n: to_dict(self.sim_results[n], names[n], self.last_source) for n in selected if n in self.sim_results},
                     }
                     content = json.dumps(payload, indent=2)
                 elif fmt == "csv":
-                    content = to_csv(sims[ORDER[0]])
+                    content = to_csv(sim)
                 else:
                     header = f"Algorithm comparison for {self.last_source}\n{'=' * (25 + len(self.last_source))}"
                     content = header + "\n\n" + comparison_table(runs, names) + "\n"
             else:
                 if fmt == "json":
-                    content = to_json(self.last_sim, display_name(self.last_algo), self.last_source)
+                    content = to_json(sim, display_name(active_algo), self.last_source)
                 elif fmt == "csv":
-                    content = to_csv(self.last_sim)
+                    content = to_csv(sim)
                 else:
-                    content = format_report(self.last_sim, display_name(self.last_algo), self.last_source)
+                    content = format_report(sim, display_name(active_algo), self.last_source)
 
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(content)
