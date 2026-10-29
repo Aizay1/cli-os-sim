@@ -423,7 +423,7 @@ class SimulatorApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("CLI OS Simulator - Interactive GUI")
+        self.title("ossim — OS Simulator")
         self.geometry("1240x800")
         self.minsize(1000, 660)
 
@@ -456,17 +456,33 @@ class SimulatorApp(ctk.CTk):
         self.sidebar_frame = ctk.CTkScrollableFrame(self, width=280, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
 
-        # Title
+        # Title & Branding: "ossim" + "OS Simulator"
+        title_box = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+        title_box.pack(padx=16, pady=(16, 2), fill="x")
+
         self.title_label = ctk.CTkLabel(
-            self.sidebar_frame,
-            text="OS SIMULATOR",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            title_box,
+            text="ossim",
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color=("#1F6AA5", "#3895D3"),
         )
-        self.title_label.pack(padx=16, pady=(16, 2), anchor="w")
+        self.title_label.pack(side="left")
+
+        self.badge_label = ctk.CTkLabel(
+            title_box,
+            text="OS SIMULATOR",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            fg_color=("#E1EBF5", "#1E293B"),
+            text_color=("#1E40AF", "#93C5FD"),
+            corner_radius=4,
+            padx=6,
+            pady=2,
+        )
+        self.badge_label.pack(side="left", padx=(8, 0))
 
         self.subtitle_label = ctk.CTkLabel(
             self.sidebar_frame,
-            text="CPU Scheduling & Deadlock Engine",
+            text="Deterministic CPU & Deadlock Simulator",
             font=ctk.CTkFont(size=11),
             text_color="gray",
         )
@@ -681,7 +697,50 @@ class SimulatorApp(ctk.CTk):
             width=248,
             height=26,
         )
-        self.theme_menu.pack(padx=16, pady=(0, 16), fill="x")
+        self.theme_menu.pack(padx=16, pady=(0, 14), fill="x")
+
+        # --- FOOTER ---
+        footer_frame = ctk.CTkFrame(
+            self.sidebar_frame,
+            fg_color=("gray90", "gray17"),
+            corner_radius=8,
+            border_width=1,
+            border_color=("gray80", "gray28"),
+        )
+        footer_frame.pack(padx=16, pady=(4, 16), fill="x")
+
+        footer_title = ctk.CTkLabel(
+            footer_frame,
+            text="Built by Kaleb",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#1A1A1A", "#E0E0E0"),
+        )
+        footer_title.pack(padx=12, pady=(8, 1))
+
+        footer_origin = ctk.CTkLabel(
+            footer_frame,
+            text="from Ethiopia 🇪🇹",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray40", "gray65"),
+        )
+        footer_origin.pack(padx=12, pady=(0, 6))
+
+        def open_github():
+            import webbrowser
+            webbrowser.open_new_tab("https://github.com/Aizay1")
+
+        github_btn = ctk.CTkButton(
+            footer_frame,
+            text="GitHub: @Aizay1 ↗",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            height=26,
+            fg_color=("#24292E", "#1F2328"),
+            hover_color=("#0F1419", "#0B0E11"),
+            text_color="#FFFFFF",
+            corner_radius=6,
+            command=open_github,
+        )
+        github_btn.pack(padx=12, pady=(0, 8), fill="x")
 
     def _create_section_header(self, title: str):
         label = ctk.CTkLabel(

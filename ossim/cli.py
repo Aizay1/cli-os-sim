@@ -366,9 +366,10 @@ def _emit(text: str, output: Optional[str]) -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
 
-    # ``ossim help [algorithm]`` -- a richer, self-contained guide.
-    if raw and raw[0].lower() == "help":
-        return print_help(raw[1] if len(raw) > 1 else None)
+    # ``ossim help [algorithm]`` or ``ossim guide`` / ``the full guide``
+    if raw and (raw[0].lower() in ("help", "guide") or "guide" in " ".join(raw).lower()):
+        topic = raw[1] if len(raw) > 1 and raw[0].lower() in ("help", "guide") else None
+        return print_help(topic)
 
     parser = build_arg_parser()
     args = parser.parse_args(raw)
